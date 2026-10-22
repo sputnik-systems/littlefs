@@ -107,6 +107,16 @@ static int lfs_bd_read(lfs_t *lfs,
         LFS_ASSERT(!lfs->block_count || block < lfs->block_count);
         rcache->block = block;
         rcache->off = lfs_aligndown(off, lfs->cfg->read_size);
+        // sputnik: with a block-sized cache, always load metadata blocks from
+        // offset 0. Otherwise the cache ends up split at a read_size boundary
+        // (the revision read caches the head, the tag scan loads the rest), and
+        // lfs_dir_getslice, which walks tags backwards, reloads read_size bytes
+        // every time it crosses that boundary: ~2 MiB of reads to traverse 2500
+        // inline files at mount, seconds of stall on SPI NOR.
+        if (rcache == &lfs->rcache &&
+                lfs->cfg->cache_size >= lfs->cfg->block_size) {
+            rcache->off = 0;
+        }
         rcache->size = lfs_min(
                 lfs_min(
                     lfs_alignup(off+hint, lfs->cfg->read_size),
