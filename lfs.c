@@ -926,8 +926,15 @@ static int lfs_dir_traverse(lfs_t *lfs,
         {
             if (off+lfs_tag_dsize(ptag) < dir->off) {
                 off += lfs_tag_dsize(ptag);
+                // sputnik: hint the whole block, not just the tag. Compaction
+                // traverses the tags of a metadata block in nested loops, and
+                // with a tag-sized hint every miss refilled the read cache with
+                // only read_size bytes, so a 4 KiB block was re-read from flash
+                // hundreds of times per compaction (0.3-1.6 MiB per compaction on
+                // SPI NOR, seconds-long stalls). With cache_size == block_size
+                // the block is read once; smaller caches behave as before.
                 int err = lfs_bd_read(lfs,
-                        NULL, &lfs->rcache, sizeof(tag),
+                        NULL, &lfs->rcache, lfs->cfg->block_size,
                         dir->pair[0], off, &tag, sizeof(tag));
                 if (err) {
                     return err;
