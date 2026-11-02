@@ -241,7 +241,14 @@ struct lfs_config {
     // Set to -1 to disable metadata compaction during lfs_fs_gc.
     lfs_size_t compact_thresh;
 
-    // Optional statically allocated read buffer. Must be cache_size.
+    // sputnik: size of the metadata read cache (lfs->rcache) when it differs
+    // from cache_size; 0 means cache_size. Must be a multiple of read_size and
+    // divide block_size. A block-sized read cache enables the traverse-hint
+    // patches while program and file caches stay small (RAM-limited targets).
+    lfs_size_t rcache_size;
+
+    // Optional statically allocated read buffer. Must be cache_size, or
+    // rcache_size when that is set.
     // By default lfs_malloc is used to allocate this buffer.
     void *read_buffer;
 

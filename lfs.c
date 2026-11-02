@@ -28,6 +28,16 @@ enum {
 
 /// Caching block device operations ///
 
+// sputnik: capacity of a read cache — the metadata cache may be larger than
+// the program and file caches (cfg->rcache_size)
+static inline lfs_size_t lfs_rcache_cap(const lfs_t *lfs,
+        const lfs_cache_t *rcache) {
+    if (rcache == &lfs->rcache && lfs->cfg->rcache_size) {
+        return lfs->cfg->rcache_size;
+    }
+    return lfs->cfg->cache_size;
+}
+
 static inline void lfs_cache_drop(lfs_t *lfs, lfs_cache_t *rcache) {
     // do not zero, cheaper if cache is readonly or only going to be
     // written with identical data (during relocates)
@@ -115,7 +125,7 @@ static int lfs_bd_read(lfs_t *lfs,
         // every time it crosses that boundary: ~2 MiB of reads to traverse 2500
         // inline files at mount, seconds of stall on SPI NOR.
         if (rcache == &lfs->rcache &&
-                lfs->cfg->cache_size >= lfs->cfg->block_size) {
+                lfs_rcache_cap(lfs, rcache) >= lfs->cfg->block_size) {
             rcache->off = 0;
         }
         rcache->size = lfs_min(
@@ -123,7 +133,7 @@ static int lfs_bd_read(lfs_t *lfs,
                     lfs_alignup(off+hint, lfs->cfg->read_size),
                     lfs->cfg->block_size)
                 - rcache->off,
-                lfs->cfg->cache_size);
+                lfs_rcache_cap(lfs, rcache));
         int err = lfs->cfg->read(lfs->cfg, rcache->block,
                 rcache->off, rcache->buffer, rcache->size);
         LFS_ASSERT(err <= 0);
@@ -847,7 +857,7 @@ static int lfs_dir_getread(lfs_t *lfs, const lfs_mdir_t *dir,
         rcache->block = LFS_BLOCK_INLINE;
         rcache->off = lfs_aligndown(off, lfs->cfg->read_size);
         rcache->size = lfs_min(lfs_alignup(off+hint, lfs->cfg->read_size),
-                lfs->cfg->cache_size);
+                lfs_rcache_cap(lfs, rcache));
         int err = lfs_dir_getslice(lfs, dir, gmask, gtag,
                 rcache->off, rcache->buffer, rcache->size);
         if (err < 0) {
@@ -4259,6 +4269,10 @@ static int lfs_init(lfs_t *lfs, const struct lfs_config *cfg) {
     LFS_ASSERT(lfs->cfg->cache_size % lfs->cfg->read_size == 0);
     LFS_ASSERT(lfs->cfg->cache_size % lfs->cfg->prog_size == 0);
     LFS_ASSERT(lfs->cfg->block_size % lfs->cfg->cache_size == 0);
+    LFS_ASSERT(lfs->cfg->rcache_size == 0 ||
+            (lfs->cfg->rcache_size % lfs->cfg->read_size == 0 &&
+             lfs->cfg->block_size % lfs->cfg->rcache_size == 0 &&
+             lfs->cfg->rcache_size >= lfs->cfg->cache_size));
 
     // check that the block size is large enough to fit all ctz pointers
     LFS_ASSERT(lfs->cfg->block_size >= 128);
@@ -4297,7 +4311,7 @@ static int lfs_init(lfs_t *lfs, const struct lfs_config *cfg) {
     if (lfs->cfg->read_buffer) {
         lfs->rcache.buffer = lfs->cfg->read_buffer;
     } else {
-        lfs->rcache.buffer = lfs_malloc(lfs->cfg->cache_size);
+        lfs->rcache.buffer = lfs_malloc(lfs_rcache_cap(lfs, &lfs->rcache));
         if (!lfs->rcache.buffer) {
             err = LFS_ERR_NOMEM;
             goto cleanup;
